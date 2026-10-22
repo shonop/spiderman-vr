@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BLOCKS, BLOCK, SIDEWALK_HEIGHT, blockCenter } from './city.js';
 import { createRandom, paint, pick } from './utils.js';
+import { createHuman, createHumanMaterial, createPose, walkPose, standPose } from './human.js';
 
 const PEOPLE_PER_BLOCK = 6;
 const WALK_PATH = BLOCK - 4; // people walk a square loop 2m in from the curb
@@ -14,8 +15,20 @@ export const HIP = { x: 0.09, y: 0.9 };
 export const SHOULDER = { x: 0.22, y: 1.41 };
 export const ARM_SPREAD = 0.06; // arms hang slightly away from the body
 const VIEW_DISTANCE = 100; // people farther than this are lost in the haze, so they aren't drawn
+// The people closest to the player get a detailed, skinned body instead of the simple figure.
+const DETAILED = 10;
+const DETAIL_NEAR = 26;
+const DETAIL_FAR = 30; // a detailed body is handed back only beyond this (no flicker at the edge)
 
-const SKIN_TONES = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#5c3a21'];
+const SKIN_TONES = ['#f2cfb0', '#ecc19c', '#e0ac85', '#c68e6a', '#a86f4c', '#8d5a3c', '#5c3a28'];
+const EYE_COLORS = ['#3b2a1a', '#4a3322', '#2a1c12', '#4e6a7a', '#4f6b3a', '#5a7a9a'];
+const SHOES = [
+  ['#f2f2f2', '#f8f8f8'],
+  ['#151515', '#f0f0f0'],
+  ['#2a1c14', '#1a1a1a'],
+  ['#5a3a24', '#2a1a10'],
+  ['#3a4a6a', '#f2f2f2'],
+];
 const HAIR_COLORS = ['#1b1512', '#3b2416', '#6a4325', '#b88a4a', '#d9b26f', '#8c3b1f', '#9a9a9a'];
 const PANTS_COLORS = ['#2b3a55', '#3d5a80', '#1f1f24', '#4a4a4f', '#8a7a5c', '#5b4636', '#26303f'];
 const SHIRT_COLORS = ['#e63946', '#f1faee', '#a8dadc', '#457b9d', '#1d3557', '#2a9d8f', '#e9c46a', '#f4a261', '#6d597a', '#ffffff', '#222222', '#88b04b'];
@@ -95,7 +108,27 @@ export function createPeople(scene, blobTexture) {
           hair: pick(random, HAIR_COLORS),
           shirt: random() < 0.6 ? pick(random, SHIRT_COLORS) : new THREE.Color().setHSL(random(), 0.55, 0.5).getHex(),
           pants: pick(random, PANTS_COLORS),
+          body: null, // the detailed body this person has right now, if any
+          d2: Infinity,
         });
+        const person = people[people.length - 1];
+        const [shoes, sole] = pick(random, SHOES);
+        const pants = random();
+        person.style = {
+          skin: person.skin,
+          eyes: pick(random, EYE_COLORS),
+          hair: person.hair,
+          hairStyle: person.longHair ? 'long' : pick(random, ['short', 'short', 'short', 'buzz', 'bald']),
+          top: person.shirt,
+          topStyle: random() < 0.25 ? 'hoodie' : 'tshirt',
+          pants: person.pants,
+          pantsStyle: pants < 0.6 ? 'jeans' : pants < 0.85 ? 'shorts' : 'joggers',
+          shoes,
+          sole,
+          beard: !person.longHair && random() < 0.3 ? 0.3 + random() * 0.6 : 0,
+          build: person.width,
+          belly: random() < 0.25 ? random() * 0.04 : 0,
+        };
       }
     }
   }
@@ -154,6 +187,58 @@ export function createPeople(scene, blobTexture) {
     }
   }
 
+  // A small pool of detailed bodies, handed to whoever is nearest. Changing a body's look means
+  // rebuilding its geometry, so at most one is rebuilt per frame.
+  const detailMaterial = createHumanMaterial();
+  const bodies = [];
+  for (let i = 0; i < DETAILED; i++) {
+    const human = createHuman(people[i].style, detailMaterial);
+    human.root.visible = false;
+    scene.add(human.root);
+    bodies.push({ human, owner: null, look: people[i], pose: createPose() });
+  }
+  const nearby = [];
+  let time = 0;
+
+  function updateBodies() {
+    for (const body of bodies) {
+      if (body.owner && body.owner.d2 > DETAIL_FAR ** 2) {
+        body.owner.body = null;
+        body.owner = null;
+      }
+    }
+    nearby.sort((a, b) => a.d2 - b.d2);
+    let rebuilds = 1;
+    for (const person of nearby) {
+      if (person.body) continue;
+      let body = bodies.find((b) => !b.owner && b.look === person); // already dressed as this person
+      if (!body && rebuilds > 0) {
+        body = bodies.find((b) => !b.owner);
+        if (body) {
+          body.human.setStyle(person.style);
+          body.look = person;
+          rebuilds--;
+        }
+      }
+      if (!body) break;
+      body.owner = person;
+      person.body = body;
+    }
+
+    for (const body of bodies) {
+      const person = body.owner;
+      const { root } = body.human;
+      root.visible = !!person;
+      if (!person) continue;
+      root.position.set(person.wx, SIDEWALK_HEIGHT, person.wz);
+      root.rotation.y = person.facing;
+      root.scale.setScalar(person.height);
+      if (person.speed > 0) walkPose(body.pose, person.phase, 0);
+      else standPose(body.pose, time + person.cx * 0.1 + person.t);
+      body.human.apply(body.pose);
+    }
+  }
+
   const body = new THREE.Matrix4();
   const joint = new THREE.Matrix4();
   const limb = new THREE.Matrix4();
@@ -162,6 +247,7 @@ export function createPeople(scene, blobTexture) {
   const scale = new THREE.Vector3();
   const euler = new THREE.Euler(0, 0, 0, 'ZYX');
   const UP = new THREE.Vector3(0, 1, 0);
+  const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
 
   function setLimb(mesh, index, x, y, swing, spread) {
     joint.makeRotationFromEuler(euler.set(swing, 0, spread));
@@ -176,6 +262,8 @@ export function createPeople(scene, blobTexture) {
     let visible = 0;
     let shortCount = 0;
     let longCount = 0;
+    time += dt;
+    nearby.length = 0;
 
     for (const person of people) {
       let x, z, heading;
@@ -194,7 +282,20 @@ export function createPeople(scene, blobTexture) {
 
       const wx = person.cx + x;
       const wz = person.cz + z;
-      if ((wx - viewer.x) ** 2 + (wz - viewer.z) ** 2 > VIEW_DISTANCE ** 2) continue;
+      person.d2 = (wx - viewer.x) ** 2 + (wz - viewer.z) ** 2;
+      if (person.d2 > VIEW_DISTANCE ** 2) continue;
+      person.wx = wx;
+      person.wz = wz;
+      person.facing = heading;
+      if (person.d2 < DETAIL_NEAR ** 2) nearby.push(person);
+      if (person.body && person.d2 <= DETAIL_FAR ** 2) {
+        // Drawn by the detailed body; just the ground shadow here.
+        const i = visible++;
+        claimSlot(bodySlots, i, person, bodyMeshes);
+        shadows.setMatrixAt(i, shadowMatrix.makeTranslation(wx, SIDEWALK_HEIGHT + 0.01, wz));
+        for (const mesh of bodyMeshes) mesh.setMatrixAt(i, hidden);
+        continue;
+      }
       const i = visible++;
       claimSlot(bodySlots, i, person, bodyMeshes);
       const hairMesh = person.longHair ? meshes.longHair : meshes.shortHair;
@@ -224,6 +325,7 @@ export function createPeople(scene, blobTexture) {
       meshes.handR.setMatrixAt(i, limb);
     }
 
+    updateBodies();
     for (const mesh of bodyMeshes) mesh.count = visible;
     shadows.count = visible;
     meshes.shortHair.count = shortCount;

@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BLOCKS, BLOCK, blockCenter } from './city.js';
-import { PARTS, HIP, SHOULDER, ARM_SPREAD } from './people.js';
 import { SIDES } from './input.js';
-import { paint } from './utils.js';
 import { playThud } from './sound.js';
+import { createHuman, createHumanMaterial, createPose, copyPose, lerpPose, standPose, walkPose, cycleLength, lookAt } from './human.js';
+import { MOVES, attackLength, guardPose, attackPose, hitPose, knockoutPose } from './brawl.js';
 
 const FIRST_WAVE_DELAY = 30; // seconds of free swinging after PLAY before the first thugs show up
 const NEXT_WAVE_DELAY = 30;
@@ -14,20 +14,23 @@ const SPAWN_MAX = 200;
 
 const THUG_HEALTH = 100;
 const RUN_SPEED = 3.6; // a bit slower than the player walks, so you can always back off
+const SHUFFLE_SPEED = 1.5; // closing the last couple of meters with the guard up
+const SHUFFLE_RANGE = 2.6;
 const WALK_SPEED = 1.4;
 const TURN_SPEED = 8;
 const NOTICE_RANGE = 25; // thugs start fighting when the player comes down on the street this close
 const GIVE_UP_RANGE = 60;
 const STREET_LEVEL = 3; // the player counts as "on the street" below this height above the ground
-const REACH = 1.3; // thugs stop here and swing
-const SWING_RANGE = 1.8; // the swing lands if the player is still this close when it comes
-const WINDUP = 0.5;
-const STRIKE = 0.18;
-const THUG_DAMAGE = 7;
+const REACH = 1.1; // thugs stop here and start throwing punches
+const DODGE = 0.35; // a punch misses if the player's head moved this far after it was thrown
+const BLOCK_RADIUS = 0.22; // VR: a hand this close in front of the face blocks a punch
+const COMBO_CHANCE = 0.5; // a jab is often followed straight away by a cross
 const STUN = 0.45;
 const KNOCKBACK = 5;
 const BODY_RADIUS = 0.4;
-const PERSONAL_SPACE = 1; // how close a thug's body gets to the player's head
+const PERSONAL_SPACE = 0.85; // how close a thug's body gets to the player's head
+const FADE = 0.2; // seconds to blend from one animation into the next
+const FAST_FADE = 0.08;
 
 const PLAYER_HEALTH = 100;
 const REGEN_DELAY = 5; // health starts coming back this long after the last hit
@@ -39,21 +42,68 @@ const DESKTOP_REACH = 2.3;
 const DESKTOP_DAMAGE = 34;
 const MESSAGE_TIME = 4;
 
-const SKIN_TONES = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#5c3a21'];
-const HOODIES = ['#2b2d33', '#3a2f4a', '#4a2a2a', '#26313d', '#33302a', '#1f2a24'];
-const PANTS = ['#1f1f24', '#2b3a55', '#3a3a3f', '#26303f'];
-const BEANIES = ['#111111', '#1b1b1b', '#3a1010', '#202a3a'];
-const BANDANAS = ['#c8102e', '#c8102e', '#1d4ed8', '#151515'];
+const SKIN_TONES = ['#f2cfb0', '#e6b892', '#d29c76', '#b57b55', '#8d5a3c', '#6a4129', '#4a2c1c'];
+const EYES = ['#3b2a1a', '#4a3322', '#2a1c12', '#4e6a7a', '#4f6b3a'];
+const HAIR = ['#141110', '#1f1712', '#2e2018', '#4a3020', '#6b4a2e'];
+const HOODIES = ['#2b2d33', '#3a2f4a', '#4a2a2a', '#26313d', '#4a463c', '#1f2a24', '#5c5f66', '#7a1e22'];
+const TEES = ['#e8e4dc', '#1d1d20', '#5a6b4a', '#7a6a55'];
+const PANTS = ['#1f1f24', '#2b3a55', '#3a3a3f', '#26303f', '#4a4a4f', '#3d4a63'];
+const BEANIES = ['#111111', '#1b1b1b', '#4a1414', '#202a3a', '#3c4a2e', '#6a6a6a'];
+const BANDANAS = ['#a3121f', '#a3121f', '#1d3f8a', '#151515'];
+const SHOES = [
+  ['#f2f2f2', '#f8f8f8'],
+  ['#151515', '#f0f0f0'],
+  ['#151515', '#1a1a1a'],
+  ['#8a1a1a', '#f2f2f2'],
+  ['#c9c1b0', '#7a5a3a'],
+];
+const STRIPES = ['#e6e6e6', '#e6e6e6', '#b31b1b'];
+// Which attacks get thrown, and how often.
+const MOVE_ODDS = [
+  ['jab', 3],
+  ['cross', 2],
+  ['hook', 2],
+  ['uppercut', 1.5],
+  ['kick', 1.5],
+];
 
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
-const UP = new THREE.Vector3(0, 1, 0);
+const chance = (p) => Math.random() < p;
 
-// A bandana over the lower half of the face.
-function createMaskGeometry() {
-  return paint(
-    new THREE.SphereGeometry(0.113, 14, 4, Math.PI / 2 - 1.35, 2.7, 1.5, 0.95).scale(0.92, 1.1, 1).translate(0, 1.63, 0),
-    '#ffffff',
-  );
+// A random street thug look.
+function thugStyle() {
+  const hood = chance(0.4);
+  const hoodie = hood || chance(0.75);
+  const joggers = chance(0.5);
+  const [shoes, sole] = pick(SHOES);
+  return {
+    skin: pick(SKIN_TONES),
+    eyes: pick(EYES),
+    hair: pick(HAIR),
+    hairStyle: hood ? 'hood' : pick(['beanie', 'beanie', 'buzz', 'short', 'bald']),
+    hat: pick(BEANIES),
+    top: hoodie ? pick(HOODIES) : pick(TEES),
+    topStyle: hoodie ? 'hoodie' : 'tshirt',
+    pants: pick(PANTS),
+    pantsStyle: joggers ? 'joggers' : 'jeans',
+    stripe: joggers && chance(0.6) ? pick(STRIPES) : null,
+    shoes,
+    sole,
+    mask: chance(0.55) ? pick(BANDANAS) : null,
+    beard: chance(0.45) ? 0.45 + Math.random() * 0.45 : 0,
+    build: 1 + Math.random() * 0.15,
+    belly: chance(0.3) ? 0.015 + Math.random() * 0.03 : 0,
+  };
+}
+
+function pickMove(distance, size) {
+  const options = MOVE_ODDS.filter(([name]) => MOVES[name].range * size >= distance);
+  let roll = Math.random() * options.reduce((sum, [, odds]) => sum + odds, 0);
+  for (const [name, odds] of options) {
+    roll -= odds;
+    if (roll <= 0) return name;
+  }
+  return 'jab';
 }
 
 // Flat arrow lying on the ground plane, pointing toward -z.
@@ -84,38 +134,30 @@ function fadeUpTexture() {
 }
 
 // Street thugs that show up in waves. They wait at a street corner, rush the player when
-// Spider-Man comes down to the street, and punch. The player punches back with real arm
-// swings in VR, or F / middle click on desktop.
+// Spider-Man comes down to the street, and fight: jabs, crosses, hooks, uppercuts and kicks
+// aimed at the player's head. The player can step out of the way, block with a hand in front
+// of the face (VR), and punch back with real arm swings in VR, or F / middle click on desktop.
 export function createEnemies({ scene, rig, camera, input, renderer, city, status, blobTexture, onKnockout }) {
   const thugs = [];
-  for (let i = 0; i < MAX_THUGS; i++) thugs.push({ index: i, active: false });
-
-  // Bodies: one InstancedMesh per body part, like the pedestrians.
-  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const meshes = {};
-  const part = (name, geometry, colorKey) => {
-    const mesh = new THREE.InstancedMesh(geometry, material, MAX_THUGS);
-    mesh.frustumCulled = false;
-    mesh.receiveShadow = true;
-    mesh.visible = false;
-    mesh.userData.colorKey = colorKey;
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    mesh.setColorAt(0, new THREE.Color());
-    scene.add(mesh);
-    meshes[name] = mesh;
-  };
-  part('head', PARTS.head(), 'skin');
-  part('beanie', PARTS.shortHair(), 'beanie');
-  part('mask', createMaskGeometry(), 'mask');
-  part('torso', PARTS.torso(), 'hoodie');
-  part('hips', PARTS.hips(), 'pants');
-  part('legL', PARTS.leg(), 'pants');
-  part('legR', PARTS.leg(), 'pants');
-  part('armL', PARTS.arm(), 'hoodie');
-  part('armR', PARTS.arm(), 'hoodie');
-  part('handL', PARTS.hand(), 'skin');
-  part('handR', PARTS.hand(), 'skin');
-  const meshList = Object.values(meshes);
+  for (let i = 0; i < MAX_THUGS; i++) {
+    const material = createHumanMaterial(); // one each, so a hit thug can flash on its own
+    const human = createHuman(thugStyle(), material);
+    human.root.visible = false;
+    scene.add(human.root);
+    thugs.push({
+      index: i,
+      active: false,
+      human,
+      material,
+      pose: createPose(),
+      from: createPose(),
+      next: createPose(),
+      animation: '',
+      blend: 1,
+      fade: FADE,
+      restyle: false,
+    });
+  }
 
   const shadows = new THREE.InstancedMesh(
     new THREE.PlaneGeometry(0.9, 0.9).rotateX(-Math.PI / 2),
@@ -196,18 +238,18 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
   let sinceHurt = Infinity;
   let message = '';
   let messageTimer = 0;
+  let time = 0;
   const target = new THREE.Vector3();
 
   const head = new THREE.Vector3();
   const look = new THREE.Vector3();
-  const color = new THREE.Color();
-  const white = new THREE.Color(0xffffff);
   const handLocal = { left: new THREE.Vector3(), right: new THREE.Vector3() };
   const handPrevious = { left: new THREE.Vector3(), right: new THREE.Vector3() };
   const handReady = { left: false, right: false };
   const handCooldown = { left: 0, right: 0 };
   const handWorld = new THREE.Vector3();
   const handVelocity = new THREE.Vector3();
+  const guardPoint = new THREE.Vector3();
 
   function say(text) {
     message = text;
@@ -254,8 +296,10 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
       if (!thug.active) continue;
       const angle = (k / count) * Math.PI * 2 + Math.random() * 0.4;
       Object.assign(thug, {
-        homeX: spot.x + Math.cos(angle) * 2.2,
-        homeZ: spot.z + Math.sin(angle) * 2.2,
+        homeX: spot.x + Math.cos(angle) * 1.6,
+        homeZ: spot.z + Math.sin(angle) * 1.6,
+        spotX: spot.x,
+        spotZ: spot.z,
         state: 'idle',
         hp: THUG_HEALTH,
         vx: 0,
@@ -263,33 +307,31 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
         timer: 0,
         cooldown: Math.random(),
         phase: Math.random() * Math.PI * 2,
-        tilt: 0,
+        clock: Math.random() * 100, // so they don't all sway in step
         sink: 0,
         flash: 0,
-        swing: 0,
-        size: 1 + Math.random() * 0.1,
-        skin: pick(SKIN_TONES),
-        hoodie: pick(HOODIES),
-        pants: pick(PANTS),
-        beanie: pick(BEANIES),
-        mask: pick(BANDANAS),
+        size: 0.97 + Math.random() * 0.1,
+        moving: false,
+        speed: 0,
+        move: null,
+        attackTime: 0,
+        attacks: 0,
+        locked: false,
+        lockedAim: new THREE.Vector3(),
+        hitTime: 0,
+        downTime: 0,
+        hitLow: false,
+        hitSide: 1,
+        restyle: true, // a new look, built over the next frames (one body per frame)
       });
       thug.x = thug.homeX;
       thug.z = thug.homeZ;
       thug.heading = Math.atan2(spot.x - thug.x, spot.z - thug.z); // gathered in a circle, chatting
-      paintThug(thug);
+      thug.human.root.visible = false;
+      thug.animation = '';
     }
     phase = 'fighting';
     say(wave === 1 ? 'THUGS SPOTTED! FOLLOW THE ARROW' : `WAVE ${wave}! FOLLOW THE ARROW`);
-  }
-
-  function paintThug(thug) {
-    for (const mesh of meshList) {
-      color.set(thug[mesh.userData.colorKey]);
-      if (thug.flash > 0) color.lerp(white, Math.min(1, thug.flash * 6));
-      mesh.setColorAt(thug.index, color);
-      mesh.instanceColor.needsUpdate = true;
-    }
   }
 
   const fighting = (thug) => thug.active && thug.state !== 'down';
@@ -298,14 +340,19 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
     for (const thug of thugs) if (fighting(thug) && thug.state === 'idle') thug.state = 'chase';
   }
 
-  function hurtThug(thug, damage, dirX, dirZ) {
+  // dirX/dirZ: which way the blow pushes. low: a body shot rather than a head shot.
+  function hurtThug(thug, damage, dirX, dirZ, low = false) {
     thug.hp -= damage;
     thug.flash = 0.2;
     thug.vx = dirX * KNOCKBACK;
     thug.vz = dirZ * KNOCKBACK;
+    thug.hitTime = 0;
+    thug.hitLow = low;
+    // Head snaps toward the side the blow pushes it (+1 = the thug's left).
+    thug.hitSide = dirX * Math.cos(thug.heading) - dirZ * Math.sin(thug.heading) >= 0 ? 1 : -1;
     if (thug.hp <= 0) {
       thug.state = 'down';
-      thug.timer = 0;
+      thug.downTime = 0;
       thug.vx *= 1.6;
       thug.vz *= 1.6;
     } else {
@@ -329,9 +376,44 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
     onKnockout();
     for (const thug of thugs) {
       if (!fighting(thug)) continue;
-      Object.assign(thug, { x: thug.homeX, z: thug.homeZ, hp: THUG_HEALTH, state: 'idle', vx: 0, vz: 0, tilt: 0 });
+      Object.assign(thug, { x: thug.homeX, z: thug.homeZ, hp: THUG_HEALTH, state: 'idle', vx: 0, vz: 0 });
     }
     say('KNOCKED OUT!');
+  }
+
+  // VR: a hand held up in front of the face, between it and the punch, blocks it.
+  function blocked(thug) {
+    if (!renderer.xr.isPresenting) return false;
+    guardPoint.set(thug.x - head.x, 0, thug.z - head.z).normalize().multiplyScalar(0.18).add(head);
+    for (const side of SIDES) {
+      const controller = input.hands[side].controller;
+      if (!controller) continue;
+      controller.getWorldPosition(handWorld);
+      if (handWorld.distanceTo(guardPoint) < BLOCK_RADIUS) {
+        input.pulse(side, 0.6, 60);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // The moment a punch or kick arrives: it lands unless the player stepped away or blocked.
+  function landAttack(thug, ground) {
+    const move = MOVES[thug.move];
+    const height = head.y - ground;
+    const distance = Math.hypot(head.x - thug.x, head.z - thug.z);
+    if (head.distanceTo(thug.lockedAim) > DODGE) return playThud(0.1, 2.6); // dodged: a whoosh
+    if (distance > move.range * thug.size + 0.2 || height < 0.5 || height > 2.6) return;
+    if (blocked(thug)) return playThud(0.35, 1.7);
+    hurtPlayer(move.damage);
+  }
+
+  function startAttack(thug, name) {
+    thug.state = 'attack';
+    thug.move = name;
+    thug.attackTime = 0;
+    thug.attacks++;
+    thug.locked = false;
   }
 
   function turnToward(thug, x, z, dt) {
@@ -351,7 +433,8 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
     const stepLength = Math.min(speed * dt, d - stopAt);
     thug.x += (dx / d) * stepLength;
     thug.z += (dz / d) * stepLength;
-    thug.phase += stepLength * 4.5;
+    thug.speed = speed;
+    thug.phase += (stepLength / (cycleLength(speed > 2 ? 1 : 0) * thug.size)) * Math.PI * 2;
     return true;
   }
 
@@ -389,6 +472,7 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
 
     thug.timer -= dt;
     thug.cooldown -= dt;
+    thug.hitTime += dt;
     thug.flash = Math.max(0, thug.flash - dt);
     const slide = Math.exp(-6 * dt);
     thug.x += thug.vx * dt;
@@ -400,6 +484,7 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
       case 'idle':
         if (onStreet && distance < NOTICE_RANGE) alertAll();
         moving = walkToward(thug, thug.homeX, thug.homeZ, WALK_SPEED, 0.3, dt);
+        if (!moving) turnToward(thug, thug.spotX, thug.spotZ, dt * 0.3);
         break;
       case 'chase':
         if (distance > GIVE_UP_RANGE) {
@@ -407,37 +492,45 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
         } else if (!onStreet) {
           turnToward(thug, head.x, head.z, dt); // can't reach Spider-Man up there, just stare
         } else if (distance > REACH) {
-          moving = walkToward(thug, head.x, head.z, RUN_SPEED, REACH, dt);
+          moving = walkToward(thug, head.x, head.z, distance < SHUFFLE_RANGE ? SHUFFLE_SPEED : RUN_SPEED, REACH, dt);
         } else {
           turnToward(thug, head.x, head.z, dt);
-          if (thug.cooldown <= 0) {
-            thug.state = 'windup';
-            thug.timer = WINDUP;
-          }
+          if (thug.cooldown <= 0) startAttack(thug, pickMove(distance, thug.size));
+        }
+        if (thug.state === 'chase' && thug.cooldown <= 0 && onStreet && distance < MOVES.kick.range * thug.size && chance(dt * 0.6)) {
+          startAttack(thug, pickMove(distance, thug.size)); // sometimes swings while still closing in
         }
         break;
-      case 'windup':
-        turnToward(thug, head.x, head.z, dt);
-        if (thug.timer <= 0) {
-          thug.state = 'strike';
-          thug.timer = STRIKE;
-          const height = head.y - ground;
-          if (distance <= SWING_RANGE && height > 0.5 && height < 2.6) hurtPlayer(THUG_DAMAGE);
+      case 'attack': {
+        const move = MOVES[thug.move];
+        const before = thug.attackTime;
+        thug.attackTime += dt;
+        const t = thug.attackTime;
+        // Tracks the player while winding up, then commits to where they were.
+        if (t < move.windup) turnToward(thug, head.x, head.z, dt);
+        else if (!thug.locked) {
+          thug.locked = true;
+          thug.lockedAim.copy(head);
         }
-        break;
-      case 'strike':
-        if (thug.timer <= 0) {
+        const impact = move.windup + move.strike;
+        if (before < impact && t >= impact) landAttack(thug, ground);
+        if (thug.move === 'jab' && before < impact + move.hold && t >= impact + move.hold && chance(COMBO_CHANCE) && distance < MOVES.cross.range * thug.size) {
+          startAttack(thug, 'cross');
+          thug.attackTime = MOVES.cross.windup * 0.45; // already half loaded from the jab
+          thug.fade = 0.12;
+        } else if (t >= attackLength(move)) {
           thug.state = 'chase';
-          thug.cooldown = 0.9 + Math.random() * 0.9;
+          thug.cooldown = 1.1 + Math.random() * 1.3; // breathing room between attacks
         }
         break;
+      }
       case 'stunned':
         if (thug.timer <= 0) thug.state = 'chase';
         break;
       case 'down':
-        thug.timer += 2 * dt; // counts up while lying there
-        if (thug.timer > 6) thug.sink += dt * 0.6;
-        if (thug.sink > 0.6) thug.active = false;
+        thug.downTime += dt;
+        if (thug.downTime > 6) thug.sink += dt * 0.3; // then slowly sinks away
+        if (thug.sink > 0.4) thug.active = false;
         break;
     }
 
@@ -447,90 +540,139 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
       thug.z -= (dz / distance) * (PERSONAL_SPACE - distance);
     }
     collide(thug);
-
-    // Pose
-    const tiltTarget = thug.state === 'down' ? -Math.PI / 2 : thug.state === 'stunned' ? -0.35 : 0;
-    thug.tilt += (tiltTarget - thug.tilt) * Math.min(1, dt * (thug.state === 'down' ? 7 : 12));
-    const swingTarget = thug.state === 'windup' ? 0.6 : thug.state === 'strike' ? -1.65 : thug.state === 'idle' ? 0 : -1.05;
-    thug.swing += (swingTarget - thug.swing) * Math.min(1, dt * (thug.state === 'strike' ? 30 : 10));
-    if (!moving && thug.state !== 'down') thug.phase += dt * 1.2 * (thug.state === 'idle' ? 0.6 : 2);
     thug.moving = moving;
+    thug.onStreet = onStreet;
   }
 
-  // Matrices for one thug's body parts.
-  const body = new THREE.Matrix4();
-  const joint = new THREE.Matrix4();
-  const limb = new THREE.Matrix4();
-  const position = new THREE.Vector3();
-  const rotation = new THREE.Quaternion();
-  const tiltRotation = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  const euler = new THREE.Euler(0, 0, 0, 'ZYX');
+  // --- Animation ---
+
+  const aim = new THREE.Vector3();
+  const lookPoint = { x: 0, y: 0, z: 0 };
+
+  // A world point in the thug's own space (facing +z, in units of its height).
+  function toLocal(thug, x, y, z, out) {
+    const ground = city.groundHeightAt(thug.x, thug.z);
+    const dx = x - thug.x;
+    const dz = z - thug.z;
+    const c = Math.cos(thug.heading);
+    const s = Math.sin(thug.heading);
+    out.x = (dx * c - dz * s) / thug.size;
+    out.y = (y - ground) / thug.size;
+    out.z = (dx * s + dz * c) / thug.size;
+    return out;
+  }
+
+  // Works out what the body is doing this frame and blends smoothly between animations.
+  function animate(thug, dt) {
+    const pose = thug.next;
+    const t = thug.clock;
+    let name = thug.state;
+    const aimed = thug.state === 'attack' && thug.locked ? thug.lockedAim : head;
+    toLocal(thug, aimed.x, aimed.y, aimed.z, aim);
+
+    switch (thug.state) {
+      case 'idle':
+        if (thug.moving) {
+          name = 'walk';
+          walkPose(pose, thug.phase, 0);
+        } else {
+          standPose(pose, t, 0.7);
+          toLocal(thug, thug.spotX, 0, thug.spotZ, lookPoint);
+          lookPoint.y = 1.55; // the faces of the others in the circle
+          lookAt(pose, lookPoint, 0.7);
+        }
+        break;
+      case 'chase':
+        if (thug.moving && thug.speed > 2) {
+          name = 'run';
+          walkPose(pose, thug.phase, 1);
+        } else if (!thug.onStreet) {
+          name = 'stare';
+          standPose(pose, t);
+          lookAt(pose, aim);
+        } else {
+          name = 'guard';
+          guardPose(pose, t, thug.moving ? 1 : 0);
+          lookAt(pose, aim);
+        }
+        break;
+      case 'attack':
+        name = `attack${thug.attacks}`;
+        attackPose(pose, MOVES[thug.move], thug.attackTime, t, aim);
+        lookAt(pose, aim);
+        break;
+      case 'stunned':
+        hitPose(pose, t, thug.hitTime, thug.hitLow, thug.hitSide);
+        break;
+      case 'down':
+        knockoutPose(pose, t, thug.downTime, thug.hitSide);
+        break;
+    }
+
+    if (name !== thug.animation) {
+      if (thug.animation) {
+        copyPose(thug.from, thug.pose);
+        thug.blend = 0;
+        if (name === 'stunned' || name === 'down') thug.fade = FAST_FADE;
+        else if (thug.fade === FADE || thug.fade === FAST_FADE) thug.fade = FADE;
+      } else {
+        thug.blend = 1;
+      }
+      thug.animation = name;
+    }
+    thug.blend = Math.min(1, thug.blend + dt / thug.fade);
+    if (thug.blend < 1) {
+      const k = thug.blend * thug.blend * (3 - 2 * thug.blend);
+      lerpPose(thug.pose, thug.from, pose, k);
+    } else {
+      copyPose(thug.pose, pose);
+      thug.fade = FADE;
+    }
+    thug.human.apply(thug.pose);
+  }
+
   const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
-  const X_AXIS = new THREE.Vector3(1, 0, 0);
-
-  function setLimb(mesh, index, x, y, swing, spread) {
-    joint.makeRotationFromEuler(euler.set(swing, 0, spread));
-    joint.setPosition(x, y, 0);
-    mesh.setMatrixAt(index, limb.multiplyMatrices(body, joint));
-  }
-
+  const matrix = new THREE.Matrix4();
   const barRotation = new THREE.Quaternion();
   const barRight = new THREE.Vector3();
   const barPosition = new THREE.Vector3();
   const barScale = new THREE.Vector3();
 
-  function placeThug(thug) {
+  function placeThug(thug, dt) {
     const i = thug.index;
-    if (!thug.active) {
-      for (const mesh of meshList) mesh.setMatrixAt(i, hidden);
+    const { root } = thug.human;
+    root.visible = thug.active && !thug.restyle;
+    if (!root.visible) {
       shadows.setMatrixAt(i, hidden);
       barBack.setMatrixAt(i, hidden);
       barFill.setMatrixAt(i, hidden);
       return;
     }
     const ground = city.groundHeightAt(thug.x, thug.z);
-    const running = thug.moving && thug.state === 'chase';
-    const stride = thug.moving ? Math.sin(thug.phase) : 0;
-    const bob = thug.moving ? Math.abs(Math.cos(thug.phase)) * (running ? 0.06 : 0.03) : 0;
-    const sway = thug.moving || thug.state === 'down' ? 0 : Math.sin(thug.phase) * 0.06;
+    thug.clock += dt;
+    root.position.set(thug.x, ground - thug.sink, thug.z);
+    root.rotation.y = thug.heading;
+    root.scale.setScalar(thug.size);
+    animate(thug, dt);
+    thug.material.emissive.setRGB(0.2, 0.04, 0.03).multiplyScalar(Math.min(1, thug.flash * 6)); // a brief red flush when hit
 
-    position.set(thug.x, ground + bob - thug.sink, thug.z);
-    rotation.setFromAxisAngle(UP, thug.heading).multiply(tiltRotation.setFromAxisAngle(X_AXIS, thug.tilt + sway * 0.3));
-    scale.setScalar(thug.size);
-    body.compose(position, rotation, scale);
-
-    for (const name of ['head', 'beanie', 'mask', 'torso', 'hips']) meshes[name].setMatrixAt(i, body);
-    shadows.setMatrixAt(i, limb.makeTranslation(thug.x, ground + 0.01, thug.z));
-
-    const legSwing = running ? 0.75 : 0.45;
-    const down = thug.state === 'down';
-    setLimb(meshes.legL, i, -HIP.x, HIP.y, down ? 0 : stride * legSwing, down ? -0.15 : 0);
-    setLimb(meshes.legR, i, HIP.x, HIP.y, down ? 0 : -stride * legSwing, down ? 0.15 : 0);
-
-    // Fists up while fighting; the right arm throws the punch.
-    const fightingPose = thug.state !== 'idle' && !down;
-    const guard = fightingPose ? -1.1 + Math.sin(thug.phase * 0.7) * 0.1 : -stride * 0.35 + sway;
-    const punch = fightingPose ? thug.swing : stride * 0.35 - sway;
-    const spread = down ? 1.2 : fightingPose ? 0.25 : ARM_SPREAD;
-    setLimb(meshes.armL, i, -SHOULDER.x, SHOULDER.y, thug.state === 'stunned' ? -2.2 : guard, -spread);
-    meshes.handL.setMatrixAt(i, limb);
-    setLimb(meshes.armR, i, SHOULDER.x, SHOULDER.y, thug.state === 'stunned' ? -2.4 : punch, thug.state === 'strike' ? 0.05 : spread);
-    meshes.handR.setMatrixAt(i, limb);
+    // The shadow follows the hips (they end up away from the feet when lying down).
+    const lying = Math.sin(thug.pose.tilt) * 0.85 * thug.size;
+    shadows.setMatrixAt(i, matrix.makeTranslation(thug.x - Math.sin(thug.heading) * lying, ground + 0.01, thug.z - Math.cos(thug.heading) * lying));
 
     // Health bar
-    if (down || thug.hp >= THUG_HEALTH) {
+    if (thug.state === 'down' || thug.hp >= THUG_HEALTH) {
       barBack.setMatrixAt(i, hidden);
       barFill.setMatrixAt(i, hidden);
       return;
     }
     camera.getWorldQuaternion(barRotation);
     barRight.set(1, 0, 0).applyQuaternion(barRotation);
-    barPosition.set(thug.x, ground + 2.15 * thug.size, thug.z);
-    barBack.setMatrixAt(i, limb.compose(barPosition, barRotation, barScale.set(1, 1, 1)));
+    barPosition.set(thug.x, ground + 2.1 * thug.size, thug.z);
+    barBack.setMatrixAt(i, matrix.compose(barPosition, barRotation, barScale.set(1, 1, 1)));
     look.copy(head).sub(barPosition).normalize().multiplyScalar(0.01);
     barPosition.addScaledVector(barRight, -0.29).add(look);
-    barFill.setMatrixAt(i, limb.compose(barPosition, barRotation, barScale.set(Math.max(0.001, thug.hp / THUG_HEALTH), 1, 1)));
+    barFill.setMatrixAt(i, matrix.compose(barPosition, barRotation, barScale.set(Math.max(0.001, thug.hp / THUG_HEALTH), 1, 1)));
   }
 
   // VR: any thug a fast-moving hand passes through gets hit, harder the faster the swing.
@@ -566,7 +708,8 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
         const flat = Math.hypot(dirX, dirZ);
         if (flat < 0.5) [dirX, dirZ] = [thug.x - head.x, thug.z - head.z];
         const length = Math.hypot(dirX, dirZ) || 1;
-        hurtThug(thug, THREE.MathUtils.clamp(speed * 9, 18, 50), dirX / length, dirZ / length);
+        const low = handWorld.y < ground + 1.25 * thug.size;
+        hurtThug(thug, THREE.MathUtils.clamp(speed * 9, 18, 50), dirX / length, dirZ / length, low);
         input.pulse(side, 1, 70);
         handCooldown[side] = 0.35;
         break;
@@ -581,6 +724,7 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
     fist.userData.t = 0;
 
     camera.getWorldDirection(look);
+    const lookingDown = look.y < -0.45; // aiming low hits the body
     look.y = 0;
     look.normalize();
     let best = null;
@@ -596,7 +740,7 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
       best = thug;
       bestDistance = d;
     }
-    if (best) hurtThug(best, DESKTOP_DAMAGE, look.x, look.z);
+    if (best) hurtThug(best, DESKTOP_DAMAGE, look.x, look.z, lookingDown);
     else playThud(0.12, 2.5); // a whoosh at the air
   }
 
@@ -620,7 +764,6 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
     target.y = city.groundHeightAt(target.x, target.z);
 
     const distance = Math.hypot(target.x - head.x, target.z - head.z);
-    const time = performance.now() / 1000;
     beam.visible = true;
     chevron.visible = distance > 15;
     beam.position.copy(target);
@@ -643,10 +786,12 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
   }
 
   function update(dt, playing) {
+    time += dt;
     status.update(dt);
     updateFists(dt, playing && phase !== 'off' && !renderer.xr.isPresenting);
     if (!playing || phase === 'off') {
-      for (const object of [...meshList, shadows, barBack, barFill, beam, chevron, arrow]) object.visible = false;
+      for (const object of [shadows, barBack, barFill, beam, chevron, arrow]) object.visible = false;
+      for (const thug of thugs) thug.human.root.visible = false;
       status.hide();
       return;
     }
@@ -662,7 +807,14 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
       if (timer <= 0) spawnWave();
     }
 
-    // Knocked-out thugs keep falling and fading even after the wave is over.
+    // New looks for a fresh wave, one body per frame so there's no hitch.
+    const restyle = thugs.find((thug) => thug.active && thug.restyle);
+    if (restyle) {
+      restyle.human.setStyle(thugStyle());
+      restyle.restyle = false;
+    }
+
+    // Knocked-out thugs keep lying there and fading even after the wave is over.
     for (const thug of thugs) if (thug.active) updateThug(thug, dt);
 
     if (input.punchDown && !renderer.xr.isPresenting) punchFromDesktop();
@@ -685,13 +837,8 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
       beam.visible = chevron.visible = arrow.visible = false;
     }
 
-    for (const thug of thugs) {
-      // Colors only change while a thug flashes white from a hit.
-      if (thug.active && (thug.flash > 0 || thug.flashing)) paintThug(thug);
-      thug.flashing = thug.flash > 0;
-      placeThug(thug);
-    }
-    for (const object of [...meshList, shadows, barBack, barFill]) {
+    for (const thug of thugs) placeThug(thug, dt);
+    for (const object of [shadows, barBack, barFill]) {
       object.visible = anyActive;
       object.instanceMatrix.needsUpdate = true;
     }
