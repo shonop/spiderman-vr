@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BLOCKS, HALF, roadCenter } from './city.js';
 import { STOP_LINE } from './streets.js';
-import { patchMaterial } from './graphics.js';
+import { patchMaterial, groupByChunk, hideBeyond } from './graphics.js';
 import { createRandom, paint, pick } from './utils.js';
 
 const LANE_OFFSET = 3.5;
@@ -10,7 +10,7 @@ const LANE_EXTENT = HALF + 40;
 const CAR_LENGTH = 4.4;
 const CARS_PER_LANE = 5;
 const YELLOW_TIME = 3; // the end of every green is shown as yellow
-const VIEW_DISTANCE = 170; // cars farther than this are lost in the haze, so they aren't drawn
+const VIEW_DISTANCE = 140; // cars farther than this are lost in the haze, so they aren't drawn
 
 // Traffic lights: roads along x go, all red, roads along z go, all red.
 const PHASES = [
@@ -195,13 +195,21 @@ export function createTraffic(scene, { skyMap, blobTexture }) {
         dummy.position.copy(center).addScaledVector(forward, 8.3).addScaledVector(right, 8.3);
         dummy.rotation.set(0, Math.atan2(-forward.x, -forward.z), 0);
         dummy.updateMatrix();
-        signals.push({ axis, matrix: dummy.matrix.clone() });
+        signals.push({ axis, matrix: dummy.matrix.clone(), position: [dummy.position.x, dummy.position.z] });
       }
     }
   }
-  const poles = instanced(createSignalGeometry(), new THREE.MeshLambertMaterial({ vertexColors: true }), signals.length);
-  poles.castShadow = true;
-  signals.forEach((signal, k) => poles.setMatrixAt(k, signal.matrix));
+  // Poles are grouped by area so far-away ones can be skipped; the bulbs are tiny and stay in one mesh.
+  const signalGeometry = createSignalGeometry();
+  const poleMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+  for (const chunk of groupByChunk(signals, (signal) => signal.position)) {
+    const poles = new THREE.InstancedMesh(signalGeometry, poleMaterial, chunk.length);
+    chunk.forEach((signal, k) => poles.setMatrixAt(k, signal.matrix));
+    poles.castShadow = true;
+    poles.receiveShadow = true;
+    scene.add(poles);
+    hideBeyond(poles);
+  }
 
   const bulbs = instanced(new THREE.CircleGeometry(0.12, 12), new THREE.MeshBasicMaterial(), signals.length * 3);
   const local = new THREE.Matrix4();

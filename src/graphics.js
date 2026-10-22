@@ -110,7 +110,7 @@ export function createEnvironment(renderer, scene) {
   const skyMap = skyTarget.texture;
   scene.background = skyMap;
 
-  scene.fog = new THREE.FogExp2(acesFilmic(HORIZON), 0.0016);
+  scene.fog = new THREE.FogExp2(acesFilmic(HORIZON), 0.0019);
 
   scene.add(new THREE.HemisphereLight(0xc4dcff, 0x6b5d4f, 1.25));
 
@@ -185,4 +185,54 @@ export function patchMaterial(material, { groundShade = false, fresnel = false }
   };
   material.customProgramCacheKey = () => `patched-${groundShade}-${fresnel}`;
   return material;
+}
+
+// Small street and roof details are split into square chunks of the city, and a chunk is
+// hidden when the player is far from it. Buildings themselves are always drawn.
+export const CHUNK_SIZE = 108; // two blocks
+export const DETAIL_DISTANCE = 200;
+const hidable = [];
+
+// Splits items into chunks by their x/z position.
+export function groupByChunk(items, positionOf) {
+  const chunks = new Map();
+  for (const item of items) {
+    const [x, z] = positionOf(item);
+    const key = `${Math.floor(x / CHUNK_SIZE)},${Math.floor(z / CHUNK_SIZE)}`;
+    if (!chunks.has(key)) chunks.set(key, []);
+    chunks.get(key).push(item);
+  }
+  return [...chunks.values()];
+}
+
+// Center of a geometry on the ground plane, for groupByChunk.
+export function geometryCenter(geometry) {
+  geometry.computeBoundingBox();
+  const { min, max } = geometry.boundingBox;
+  return [(min.x + max.x) / 2, (min.z + max.z) / 2];
+}
+
+// Call after the object's matrices (and instance matrices) are final.
+// `from` lets a cheap far-away version take over where the detailed one is hidden.
+export function hideBeyond(object, distance = DETAIL_DISTANCE, from = 0) {
+  const box = new THREE.Box3();
+  if (object.isInstancedMesh) {
+    object.computeBoundingBox();
+    box.copy(object.boundingBox);
+  } else {
+    object.geometry.computeBoundingBox();
+    box.copy(object.geometry.boundingBox);
+  }
+  object.updateMatrixWorld();
+  box.applyMatrix4(object.matrixWorld);
+  hidable.push({ object, box, distanceSq: distance * distance, fromSq: from * from });
+}
+
+export function updateHidden(viewer) {
+  for (const { object, box, distanceSq, fromSq } of hidable) {
+    const dx = Math.max(box.min.x - viewer.x, 0, viewer.x - box.max.x);
+    const dz = Math.max(box.min.z - viewer.z, 0, viewer.z - box.max.z);
+    const d = dx * dx + dz * dz;
+    object.visible = d < distanceSq && d >= fromSq;
+  }
 }

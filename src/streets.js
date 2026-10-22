@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BLOCKS, BLOCK, SIDEWALK_HEIGHT, ROAD, roadCenter, blockCenter } from './city.js';
 import { createRandom, paint } from './utils.js';
+import { groupByChunk, geometryCenter, hideBeyond } from './graphics.js';
 
 // Distances from an intersection's center, along the road.
 export const CROSSWALK_START = ROAD / 2 + 0.3;
@@ -70,6 +71,16 @@ function createLampGeometry() {
   ]);
 }
 
+const TREE_DETAIL_DISTANCE = 150; // past this, trees switch to a cheap 30-triangle version
+
+// Same tree for far away: one blob of leaves and a thin trunk.
+function createFarTreeGeometry() {
+  return mergeGeometries([
+    cylinder(0.12, 0.17, 3.4, 5, 0, 1.7, 0, '#5a4433').toNonIndexed(),
+    paint(new THREE.IcosahedronGeometry(2.1, 0).scale(1, 0.85, 1).translate(0.3, 4.3, 0.2), '#6c9c45'),
+  ]);
+}
+
 function createTreeGeometry() {
   const leaves = (radius, x, y, z, sy) =>
     paint(new THREE.IcosahedronGeometry(radius, 1).scale(1, sy, 1).translate(x, y, z), '#6c9c45');
@@ -109,8 +120,16 @@ export function createStreets(scene) {
       for (const [nx, nz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const [ax, az] = [-nz, nx];
         const at = (fromCurb, along) => [cx + nx * (edge - fromCurb) + ax * along, cz + nz * (edge - fromCurb) + az * along];
-        lamps.push({ position: at(0.6, 0), yaw: Math.atan2(nx, nz) });
-        for (const along of [-11, 11]) trees.push({ position: at(1, along + (random() - 0.5) * 2), yaw: random() * Math.PI * 2 });
+        lamps.push({ position: at(0.6, 0), yaw: Math.atan2(nx, nz), scale: 1 });
+        for (const along of [-11, 11]) {
+          const shade = 0.75 + random() * 0.4;
+          trees.push({
+            position: at(1, along + (random() - 0.5) * 2),
+            yaw: random() * Math.PI * 2,
+            scale: 0.85 + random() * 0.35,
+            color: new THREE.Color(shade * (0.85 + random() * 0.25), shade, shade * 0.85),
+          });
+        }
         const [px, pz] = at(0.7, 0);
         addSmallProps(props, px, pz, ax, az);
       }
@@ -120,29 +139,28 @@ export function createStreets(scene) {
   const matrix = new THREE.Matrix4();
   const rotation = new THREE.Quaternion();
   const UP = new THREE.Vector3(0, 1, 0);
-  const color = new THREE.Color();
-  function instanced(geometry, items, scaleOf) {
-    const mesh = new THREE.InstancedMesh(geometry, new THREE.MeshLambertMaterial({ vertexColors: true }), items.length);
-    items.forEach(({ position: [x, z], yaw }, k) => {
-      const s = scaleOf();
-      matrix.compose(new THREE.Vector3(x, SIDEWALK_HEIGHT, z), rotation.setFromAxisAngle(UP, yaw), new THREE.Vector3(s, s, s));
-      mesh.setMatrixAt(k, matrix);
-    });
+  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const addChunk = (mesh, distance, from) => {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     scene.add(mesh);
-    return mesh;
+    hideBeyond(mesh, distance, from);
+  };
+
+  function instanced(geometry, items, distance, from) {
+    for (const chunk of groupByChunk(items, (item) => item.position)) {
+      const mesh = new THREE.InstancedMesh(geometry, material, chunk.length);
+      chunk.forEach(({ position: [x, z], yaw, scale, color }, k) => {
+        matrix.compose(new THREE.Vector3(x, SIDEWALK_HEIGHT, z), rotation.setFromAxisAngle(UP, yaw), new THREE.Vector3(scale, scale, scale));
+        mesh.setMatrixAt(k, matrix);
+        if (color) mesh.setColorAt(k, color);
+      });
+      addChunk(mesh, distance, from);
+    }
   }
 
-  instanced(createLampGeometry(), lamps, () => 1);
-  const treeMesh = instanced(createTreeGeometry(), trees, () => 0.85 + random() * 0.35);
-  trees.forEach((_, k) => {
-    const shade = 0.75 + random() * 0.4;
-    treeMesh.setColorAt(k, color.setRGB(shade * (0.85 + random() * 0.25), shade, shade * 0.85));
-  });
-
-  const propMesh = new THREE.Mesh(mergeGeometries(props), new THREE.MeshLambertMaterial({ vertexColors: true }));
-  propMesh.castShadow = true;
-  propMesh.receiveShadow = true;
-  scene.add(propMesh);
+  instanced(createLampGeometry(), lamps);
+  instanced(createTreeGeometry(), trees, TREE_DETAIL_DISTANCE);
+  instanced(createFarTreeGeometry(), trees, Infinity, TREE_DETAIL_DISTANCE);
+  for (const chunk of groupByChunk(props, geometryCenter)) addChunk(new THREE.Mesh(mergeGeometries(chunk), material), 140);
 }

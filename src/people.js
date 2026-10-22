@@ -13,7 +13,7 @@ const ARM_SWING = 0.35;
 const HIP = { x: 0.09, y: 0.9 };
 const SHOULDER = { x: 0.22, y: 1.41 };
 const ARM_SPREAD = 0.06; // arms hang slightly away from the body
-const VIEW_DISTANCE = 130; // people farther than this are lost in the haze, so they aren't drawn
+const VIEW_DISTANCE = 100; // people farther than this are lost in the haze, so they aren't drawn
 
 const SKIN_TONES = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#5c3a21'];
 const HAIR_COLORS = ['#1b1512', '#3b2416', '#6a4325', '#b88a4a', '#d9b26f', '#8c3b1f', '#9a9a9a'];

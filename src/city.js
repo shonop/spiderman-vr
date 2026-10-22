@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createRandom, paint, pick } from './utils.js';
-import { patchMaterial } from './graphics.js';
+import { patchMaterial, groupByChunk, geometryCenter, hideBeyond } from './graphics.js';
 import {
   FLOOR,
   createFacades,
@@ -12,7 +12,7 @@ import {
 } from './textures.js';
 
 // City layout: a BLOCKS x BLOCKS grid of blocks with roads between and around them.
-export const BLOCKS = 7;
+export const BLOCKS = 11;
 export const BLOCK = 40;
 export const ROAD = 14;
 export const PITCH = BLOCK + ROAD;
@@ -86,6 +86,7 @@ export function createCity(scene, skyMap) {
   const facadeGeometries = { glass: [], office: [], classic: [], residential: [] };
   const storefrontGeometries = [];
   const trimGeometries = [];
+  const detailGeometries = []; // rooftop clutter, hidden when far away
   const roofGeometries = [];
   const sidewalkGeometries = [];
   const colliders = [];
@@ -136,14 +137,14 @@ export function createCity(scene, skyMap) {
       z + (looks() - 0.5) * Math.max(0, depth - d - 2 * margin),
     ];
     const solid = (w, h, d, px, pz, color) => {
-      trimGeometries.push(box(w, h, d, px, roof + h / 2, pz, color));
+      detailGeometries.push(box(w, h, d, px, roof + h / 2, pz, color));
       addCollider(px, pz, w, d, roof + h);
     };
 
     if (width < 7 || depth < 7) return;
     const [bx, bz] = place(3, 3.6);
     solid(3, 2.8, 3.6, bx, bz, '#b7b3aa');
-    trimGeometries.push(box(1.1, 2.1, 0.08, bx, roof + 1.05, bz + 1.82, '#59544d'));
+    detailGeometries.push(box(1.1, 2.1, 0.08, bx, roof + 1.05, bz + 1.82, '#59544d'));
 
     const units = Math.floor(looks() * 4);
     for (let k = 0; k < units; k++) {
@@ -151,23 +152,23 @@ export function createCity(scene, skyMap) {
       const d = 1.2 + looks() * 1;
       const [ax, az] = place(w, d);
       solid(w, 1.2, d, ax, az, '#d4d4d0');
-      trimGeometries.push(cylinder(0.4, 0.4, 0.06, 12, ax, roof + 1.23, az, '#4b4d50'));
+      detailGeometries.push(cylinder(0.4, 0.4, 0.06, 12, ax, roof + 1.23, az, '#4b4d50'));
     }
 
     if ((style === 'classic' || style === 'residential') && looks() < 0.55) {
       const [tx, tz] = place(3.6, 3.6);
       for (const [lx, lz] of [[-1.1, -1.1], [1.1, -1.1], [-1.1, 1.1], [1.1, 1.1]]) {
-        trimGeometries.push(box(0.18, 2.6, 0.18, tx + lx, roof + 1.3, tz + lz, '#3b3632'));
+        detailGeometries.push(box(0.18, 2.6, 0.18, tx + lx, roof + 1.3, tz + lz, '#3b3632'));
       }
-      trimGeometries.push(cylinder(1.7, 1.7, 3.4, 16, tx, roof + 4.3, tz, '#6e4c33'));
-      trimGeometries.push(cylinder(0.05, 1.85, 1.4, 16, tx, roof + 6.7, tz, '#4a3a2e'));
-      for (const band of [3.2, 4.4, 5.6]) trimGeometries.push(cylinder(1.73, 1.73, 0.08, 16, tx, roof + band, tz, '#2e2a27'));
+      detailGeometries.push(cylinder(1.7, 1.7, 3.4, 16, tx, roof + 4.3, tz, '#6e4c33'));
+      detailGeometries.push(cylinder(0.05, 1.85, 1.4, 16, tx, roof + 6.7, tz, '#4a3a2e'));
+      for (const band of [3.2, 4.4, 5.6]) detailGeometries.push(cylinder(1.73, 1.73, 0.08, 16, tx, roof + band, tz, '#2e2a27'));
       addCollider(tx, tz, 3.6, 3.6, roof + 7.4);
     }
 
     if (tallest && style === 'glass') {
-      trimGeometries.push(cylinder(0.12, 0.25, 14, 8, x, roof + 7, z, '#c9cdd1'));
-      trimGeometries.push(box(0.35, 0.35, 0.35, x, roof + 14.1, z, '#ff2a1a'));
+      detailGeometries.push(cylinder(0.12, 0.25, 14, 8, x, roof + 7, z, '#c9cdd1'));
+      detailGeometries.push(box(0.35, 0.35, 0.35, x, roof + 14.1, z, '#ff2a1a'));
     }
   }
 
@@ -205,12 +206,12 @@ export function createCity(scene, skyMap) {
 
       if (i === middle && j === middle) {
         // The start building: a flat, empty roof where the menu floats.
-        const roof = addBuilding(cx, cz, lot - 4, lot - 4, 60, { style: 'glass', flat: true });
+        const roof = addBuilding(cx, cz, lot - 4, lot - 4, 120, { style: 'glass', flat: true });
         spawn = new THREE.Vector3(cx, roof, cz - 8);
         addHelipad(trimGeometries, cx, roof, cz + 3);
       } else if (random() < 0.3) {
         const size = lot - 2 - random() * 6;
-        addBuilding(cx, cz, size, size, 35 + random() * 90 * centerness);
+        addBuilding(cx, cz, size, size, 60 + random() * (60 + 210 * centerness));
       } else {
         const sub = lot / 2;
         for (const ox of [-1, 1]) {
@@ -221,7 +222,7 @@ export function createCity(scene, skyMap) {
               cz + (oz * sub) / 2,
               sub - 2 - random() * 3,
               sub - 2 - random() * 3,
-              10 + random() * (15 + 55 * centerness),
+              24 + random() * (40 + 130 * centerness),
             );
           }
         }
@@ -269,7 +270,11 @@ export function createCity(scene, skyMap) {
       { groundShade: true, fresnel: true },
     ),
   );
-  addMesh(mergeGeometries(trimGeometries), new THREE.MeshLambertMaterial({ vertexColors: true }));
+  const trimMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+  addMesh(mergeGeometries(trimGeometries), trimMaterial);
+  for (const chunk of groupByChunk(detailGeometries, geometryCenter)) {
+    hideBeyond(addMesh(mergeGeometries(chunk), trimMaterial), 320);
+  }
   addMesh(mergeGeometries(roofGeometries), new THREE.MeshLambertMaterial({ map: createRoofTexture() }), { cast: false });
 
   // The island: roads, sidewalks, a promenade with a sea wall, then water and a far shore.
@@ -394,12 +399,12 @@ function createWater(skyMap) {
 function createSkyline(facadeMap) {
   const random = createRandom(31);
   const geometries = [];
-  for (let k = 0; k < 170; k++) {
+  for (let k = 0; k < 220; k++) {
     const angle = random() * Math.PI * 2;
-    const distance = 560 + random() * 320;
+    const distance = 700 + random() * 380;
     const width = 14 + random() * 30;
     const depth = 14 + random() * 30;
-    const height = 15 + random() ** 2 * 150;
+    const height = 20 + random() ** 2 * 220;
     const geometry = facadeBox(width, height, depth, 14, (faceWidth, u) => (u * faceWidth) / 16);
     geometries.push(
       paint(geometry, pick(random, ['#c9c9c4', '#b7bcc2', '#d6d0c4', '#a7aeb5'])).translate(
@@ -413,7 +418,7 @@ function createSkyline(facadeMap) {
   group.add(new THREE.Mesh(mergeGeometries(geometries), new THREE.MeshLambertMaterial({ map: facadeMap, vertexColors: true })));
   group.add(
     new THREE.Mesh(
-      new THREE.RingGeometry(520, 1100, 64).rotateX(-Math.PI / 2).translate(0, -0.6, 0),
+      new THREE.RingGeometry(660, 1400, 64).rotateX(-Math.PI / 2).translate(0, -0.6, 0),
       new THREE.MeshLambertMaterial({ color: 0x5d6158 }),
     ),
   );

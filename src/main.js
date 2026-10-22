@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
-import { createEnvironment } from './graphics.js';
+import { createEnvironment, updateHidden } from './graphics.js';
 import { createBlobTexture } from './textures.js';
 import { createCity } from './city.js';
 import { createStreets } from './streets.js';
@@ -138,6 +138,7 @@ renderer.setAnimationLoop(() => {
   traffic.update(dt, rig.position);
   people.update(dt, rig.position);
   environment.update(rig.position);
+  updateHidden(rig.position);
   updateHud();
   renderer.render(scene, camera);
 });
