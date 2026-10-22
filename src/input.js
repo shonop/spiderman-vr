@@ -12,7 +12,8 @@ const deadzone = (v) => (Math.abs(v) < DEADZONE ? 0 : v);
 // doesn't care which one is being used.
 //
 // VR:      trigger = web, grip = pull, left stick = walk, right stick = snap turn, A/X = jump
-// Desktop: left/right mouse (or Q/E) = web, Shift = pull, WASD = walk, Space = jump
+// Desktop: left/right mouse (or Q/E) = web, Shift = pull, WASD = walk, Space = jump, F / middle click = punch
+// (In VR, punching is just swinging your real hands, see enemies.js.)
 export function createInput(renderer, rig, camera) {
   const dom = renderer.domElement;
   const modelFactory = new XRControllerModelFactory();
@@ -42,6 +43,7 @@ export function createInput(renderer, rig, camera) {
   const keys = new Set();
   const mouseButtons = new Set();
   let jumpHeld = false;
+  let punchHeld = false;
   let snapReady = true;
 
   const isLocked = () => document.pointerLockElement === dom;
@@ -51,6 +53,7 @@ export function createInput(renderer, rig, camera) {
     move,
     mouse,
     jumpDown: false,
+    punchDown: false,
     onDesktopClick: null,
     update,
     getAimRay,
@@ -87,6 +90,7 @@ export function createInput(renderer, rig, camera) {
     rig.updateMatrixWorld(true);
     const pressed = { left: [false, false], right: [false, false] };
     let jump = false;
+    let punch = false;
     let turn = 0;
 
     if (renderer.xr.isPresenting) {
@@ -115,6 +119,7 @@ export function createInput(renderer, rig, camera) {
       pressed.left = [(locked && mouseButtons.has(0)) || keys.has('KeyQ'), reel];
       pressed.right = [(locked && mouseButtons.has(2)) || keys.has('KeyE'), reel];
       jump = keys.has('Space');
+      punch = keys.has('KeyF') || (locked && mouseButtons.has(1));
     }
 
     for (const side of SIDES) {
@@ -126,6 +131,8 @@ export function createInput(renderer, rig, camera) {
     }
     api.jumpDown = jump && !jumpHeld;
     jumpHeld = jump;
+    api.punchDown = punch && !punchHeld;
+    punchHeld = punch;
 
     if (Math.abs(turn) > 0.7 && snapReady) {
       rig.rotation.y -= Math.sign(turn) * SNAP_ANGLE;

@@ -9,6 +9,9 @@ import { createPeople } from './people.js';
 import { createInput, SIDES } from './input.js';
 import { createMenu } from './menu.js';
 import { createPlayer } from './player.js';
+import { createStatus } from './status.js';
+import { createEnemies } from './enemies.js';
+import { unlockAudio } from './sound.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -35,6 +38,8 @@ const traffic = createTraffic(scene, { skyMap: environment.skyMap, blobTexture }
 const people = createPeople(scene, blobTexture);
 const input = createInput(renderer, rig, camera);
 const player = createPlayer({ scene, rig, camera, input, city });
+const status = createStatus(camera);
+const enemies = createEnemies({ scene, rig, camera, input, renderer, city, status, blobTexture, onKnockout: () => player.reset() });
 const menu = createMenu({ onPlay: startGame });
 scene.add(menu.root);
 
@@ -54,6 +59,8 @@ function openMenu() {
 function startGame() {
   state = 'playing';
   menu.root.visible = false;
+  enemies.start();
+  unlockAudio();
   renderer.domElement.style.cursor = 'default';
   if (!renderer.xr.isPresenting) lockPointer();
 }
@@ -110,7 +117,7 @@ function updateMenu() {
 const HUD_TEXT = {
   menu: 'Click PLAY to start · To play in the headset press ENTER VR',
   unlocked: 'Click to play',
-  playing: 'WASD move · Space jump · Left / right click = web · Hold Shift = pull · Esc = free mouse',
+  playing: 'WASD move · Space jump · Left / right click = web · Hold Shift = pull · F = punch · Esc = free mouse',
 };
 
 function updateHud() {
@@ -127,7 +134,7 @@ function updateHud() {
 openMenu();
 
 // Handy for poking at the game from the browser console while developing.
-if (import.meta.env.DEV) window.game = { renderer, scene, rig, camera, player, input, menu, city, people };
+if (import.meta.env.DEV) window.game = { renderer, scene, rig, camera, player, input, menu, city, people, enemies };
 
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
@@ -135,6 +142,7 @@ renderer.setAnimationLoop(() => {
   input.update();
   if (state === 'menu') updateMenu();
   else player.update(dt);
+  enemies.update(dt, state === 'playing');
   traffic.update(dt, rig.position);
   people.update(dt, rig.position);
   environment.update(rig.position);

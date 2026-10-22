@@ -10,9 +10,9 @@ const LEG_SWING = 0.45;
 const ARM_SWING = 0.35;
 
 // Joint positions (meters above the feet) for an average 1.75m person facing +z.
-const HIP = { x: 0.09, y: 0.9 };
-const SHOULDER = { x: 0.22, y: 1.41 };
-const ARM_SPREAD = 0.06; // arms hang slightly away from the body
+export const HIP = { x: 0.09, y: 0.9 };
+export const SHOULDER = { x: 0.22, y: 1.41 };
+export const ARM_SPREAD = 0.06; // arms hang slightly away from the body
 const VIEW_DISTANCE = 100; // people farther than this are lost in the haze, so they aren't drawn
 
 const SKIN_TONES = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#5c3a21'];
@@ -24,7 +24,7 @@ const white = (geometry) => paint(geometry, '#ffffff');
 
 // Every part is white so the per-person instance color (skin, shirt, ...) shows through.
 // Dark vertex colors (eyes, shoes) stay dark whatever the instance color is.
-const PARTS = {
+export const PARTS = {
   head: () =>
     mergeGeometries([
       white(new THREE.SphereGeometry(0.105, 14, 10).scale(0.92, 1.1, 1).translate(0, 1.63, 0)),
