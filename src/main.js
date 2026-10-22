@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { createCity } from './city.js';
 import { createTraffic } from './traffic.js';
+import { createPeople } from './people.js';
 import { createInput, SIDES } from './input.js';
 import { createMenu } from './menu.js';
 import { createPlayer } from './player.js';
@@ -25,6 +26,7 @@ scene.add(rig);
 
 const city = createCity(scene);
 const traffic = createTraffic(scene);
+const people = createPeople(scene);
 const input = createInput(renderer, rig, camera);
 const player = createPlayer({ scene, rig, camera, input, city });
 const menu = createMenu({ onPlay: startGame });
@@ -118,7 +120,7 @@ function updateHud() {
 openMenu();
 
 // Handy for poking at the game from the browser console while developing.
-if (import.meta.env.DEV) window.game = { scene, rig, camera, player, input, menu, city };
+if (import.meta.env.DEV) window.game = { scene, rig, camera, player, input, menu, city, people };
 
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
@@ -127,6 +129,7 @@ renderer.setAnimationLoop(() => {
   if (state === 'menu') updateMenu();
   else player.update(dt);
   traffic.update(dt, rig.position);
+  people.update(dt);
   updateHud();
   renderer.render(scene, camera);
 });

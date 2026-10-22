@@ -1,14 +1,12 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { BLOCKS, BLOCK, HALF, ROAD, SIDEWALK_HEIGHT, roadCenter, blockCenter } from './city.js';
+import { BLOCKS, HALF, ROAD, roadCenter } from './city.js';
 import { createRandom, paint, pick } from './utils.js';
 
 const LANE_OFFSET = 3.5;
 const LANE_EXTENT = HALF + 40;
 const CAR_LENGTH = 4.4;
 const CARS_PER_LANE = 5;
-const PEOPLE_PER_BLOCK = 6;
-const WALK_PATH = BLOCK - 4; // people walk a square loop 2m in from the curb
 
 // Traffic lights: roads along x go, all red, roads along z go, all red.
 const PHASES = [
@@ -19,7 +17,6 @@ const PHASES = [
 ];
 
 const CAR_COLORS = ['#d62828', '#f2c200', '#f2c200', '#003049', '#2a9d8f', '#e9ecef', '#264653', '#6c757d', '#1a1a1a', '#1d4ed8'];
-const SKIN_TONES = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac'];
 
 function createCarGeometry() {
   const parts = [
@@ -32,24 +29,13 @@ function createCarGeometry() {
   return mergeGeometries(parts);
 }
 
-function createPersonGeometry() {
-  return mergeGeometries([
-    paint(new THREE.BoxGeometry(0.16, 0.85, 0.18).translate(-0.1, 0.425, 0), '#2b3040'),
-    paint(new THREE.BoxGeometry(0.16, 0.85, 0.18).translate(0.1, 0.425, 0), '#2b3040'),
-    paint(new THREE.BoxGeometry(0.46, 0.62, 0.26).translate(0, 1.17, 0), '#ffffff'),
-    paint(new THREE.BoxGeometry(0.12, 0.6, 0.14).translate(-0.3, 1.15, 0), '#ffffff'),
-    paint(new THREE.BoxGeometry(0.12, 0.6, 0.14).translate(0.3, 1.15, 0), '#ffffff'),
-  ]);
-}
-
-// Cars that drive in lanes and stop at red lights, and people walking around the blocks.
+// Cars that drive in lanes and stop at red lights.
 export function createTraffic(scene) {
   const random = createRandom(42);
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
   const intersections = Array.from({ length: BLOCKS + 1 }, (_, j) => roadCenter(j));
 
-  // ---- Cars ----
   const lanes = [];
   for (const c of intersections) {
     lanes.push(
@@ -77,37 +63,6 @@ export function createTraffic(scene) {
   carMesh.frustumCulled = false;
   for (let i = 0; i < carCount; i++) carMesh.setColorAt(i, color.set(pick(random, CAR_COLORS)));
   scene.add(carMesh);
-
-  // ---- People ----
-  const people = [];
-  for (let i = 0; i < BLOCKS; i++) {
-    for (let j = 0; j < BLOCKS; j++) {
-      for (let k = 0; k < PEOPLE_PER_BLOCK; k++) {
-        people.push({
-          cx: blockCenter(i),
-          cz: blockCenter(j),
-          t: random() * 4 * WALK_PATH,
-          dir: random() < 0.5 ? 1 : -1,
-          speed: 1.1 + random() * 0.6,
-          phase: random() * Math.PI * 2,
-        });
-      }
-    }
-  }
-
-  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const bodyMesh = new THREE.InstancedMesh(createPersonGeometry(), material, people.length);
-  const headMesh = new THREE.InstancedMesh(
-    paint(new THREE.SphereGeometry(0.13, 10, 8).translate(0, 1.66, 0), '#ffffff'),
-    material,
-    people.length,
-  );
-  bodyMesh.frustumCulled = headMesh.frustumCulled = false;
-  people.forEach((_, i) => {
-    bodyMesh.setColorAt(i, color.setHSL(random(), 0.6, 0.5));
-    headMesh.setColorAt(i, color.set(pick(random, SKIN_TONES)));
-  });
-  scene.add(bodyMesh, headMesh);
 
   let phase = 0;
   let phaseTime = 0;
@@ -171,35 +126,5 @@ export function createTraffic(scene) {
     carMesh.instanceMatrix.needsUpdate = true;
   }
 
-  function updatePeople(dt) {
-    const loop = 4 * WALK_PATH;
-    const half = WALK_PATH / 2;
-    people.forEach((person, i) => {
-      person.t = (person.t + person.dir * person.speed * dt + loop) % loop;
-      person.phase += person.speed * dt * 5;
-
-      const side = Math.floor(person.t / WALK_PATH);
-      const u = person.t - side * WALK_PATH;
-      let x, z, dx, dz;
-      if (side === 0) [x, z, dx, dz] = [-half + u, -half, 1, 0];
-      else if (side === 1) [x, z, dx, dz] = [half, -half + u, 0, 1];
-      else if (side === 2) [x, z, dx, dz] = [half - u, half, -1, 0];
-      else [x, z, dx, dz] = [-half, half - u, 0, -1];
-
-      dummy.position.set(person.cx + x, SIDEWALK_HEIGHT + Math.abs(Math.sin(person.phase)) * 0.05, person.cz + z);
-      dummy.rotation.set(0, Math.atan2(dx * person.dir, dz * person.dir), 0);
-      dummy.updateMatrix();
-      bodyMesh.setMatrixAt(i, dummy.matrix);
-      headMesh.setMatrixAt(i, dummy.matrix);
-    });
-    bodyMesh.instanceMatrix.needsUpdate = true;
-    headMesh.instanceMatrix.needsUpdate = true;
-  }
-
-  return {
-    update(dt, playerPosition) {
-      updateCars(dt, playerPosition);
-      updatePeople(dt);
-    },
-  };
+  return { update: updateCars };
 }
