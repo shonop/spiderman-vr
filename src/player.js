@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { SIDES } from './input.js';
 
-const WEB_RANGE = 90;
+const WEB_RANGE = 50; // webs only reach buildings this close (meters)
+const LOOK_RANGE = 250; // further than this, aiming at a building shows nothing at all
 const GRAVITY = 14;
 const WALK_SPEED = 4.5;
 const JUMP_SPEED = 6.5;
@@ -52,6 +53,7 @@ export function createPlayer({ scene, rig, camera, input, city }) {
   const webMaterial = new THREE.MeshBasicMaterial({ color: 0xeeeeee, toneMapped: false });
   const reticleGeometry = new THREE.SphereGeometry(1, 12, 8);
   const reticleMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.85, toneMapped: false });
+  const tooFarMaterial = new THREE.MeshBasicMaterial({ color: 0xff3b3f, depthTest: false, transparent: true, opacity: 0.6, toneMapped: false });
 
   const webs = {};
   for (const side of SIDES) {
@@ -61,7 +63,7 @@ export function createPlayer({ scene, rig, camera, input, city }) {
     reticle.renderOrder = 10;
     line.visible = reticle.visible = false;
     scene.add(line, reticle);
-    webs[side] = { attached: false, anchor: new THREE.Vector3(), length: 0, aim: null, line, reticle };
+    webs[side] = { attached: false, anchor: new THREE.Vector3(), length: 0, aim: null, tooFar: null, line, reticle };
   }
 
   const ray = new THREE.Ray();
@@ -80,7 +82,7 @@ export function createPlayer({ scene, rig, camera, input, city }) {
     for (const side of SIDES) {
       const web = webs[side];
       web.attached = false;
-      web.aim = null;
+      web.aim = web.tooFar = null;
       web.line.visible = web.reticle.visible = false;
     }
   }
@@ -194,14 +196,19 @@ export function createPlayer({ scene, rig, camera, input, city }) {
     rig.updateMatrixWorld(true);
     for (const side of SIDES) {
       const web = webs[side];
-      const { aim, line, reticle } = web;
+      const { aim, tooFar, line, reticle } = web;
 
-      reticle.visible = !!aim && !web.attached;
+      // White dot: the web will stick there. Red dot: that building is out of range.
+      const target = aim || tooFar;
+      reticle.visible = !!target && !web.attached;
       if (reticle.visible) {
-        reticle.position.copy(aim.point);
-        reticle.scale.setScalar(Math.max(0.04, aim.distance * 0.007));
+        reticle.material = aim ? reticleMaterial : tooFarMaterial;
+        reticle.position.copy(target.point);
+        reticle.scale.setScalar(Math.max(0.04, target.distance * 0.007));
       }
-      input.setRay(side, aim ? aim.distance : 1.5, aim ? 0xffffff : 0x777777);
+      if (aim) input.setRay(side, aim.distance, 0xffffff);
+      else if (tooFar) input.setRay(side, WEB_RANGE, 0xff3b3f);
+      else input.setRay(side, 1.5, 0x777777);
 
       line.visible = web.attached;
       if (web.attached) {
@@ -217,8 +224,13 @@ export function createPlayer({ scene, rig, camera, input, city }) {
     for (const side of SIDES) {
       const web = webs[side];
       const hand = input.hands[side];
-      web.aim = input.getAimRay(side, ray) ? raycastBuildings(ray, WEB_RANGE, city.colliders) : null;
-      if (hand.triggerDown && web.aim && !web.attached) attach(side, web.aim);
+      const hit = input.getAimRay(side, ray) ? raycastBuildings(ray, LOOK_RANGE, city.colliders) : null;
+      web.aim = hit && hit.distance <= WEB_RANGE ? hit : null;
+      web.tooFar = hit && !web.aim ? hit : null;
+      if (hand.triggerDown && !web.attached) {
+        if (web.aim) attach(side, web.aim);
+        else if (web.tooFar) input.pulse(side, 0.15, 20); // a short buzz: too far, nothing happens
+      }
       if (!hand.trigger) web.attached = false;
     }
 
@@ -245,5 +257,6 @@ export function createPlayer({ scene, rig, camera, input, city }) {
     reset,
     update,
     hasTarget: () => !!(webs.left.aim || webs.right.aim),
+    targetTooFar: () => !!(webs.left.tooFar || webs.right.tooFar),
   };
 }

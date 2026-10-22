@@ -121,6 +121,7 @@ function updateHud() {
   hud.style.display = desktop ? 'block' : 'none';
   crosshair.style.display = desktop && state === 'playing' && locked ? 'block' : 'none';
   crosshair.classList.toggle('target', player.hasTarget());
+  crosshair.classList.toggle('far', !player.hasTarget() && player.targetTooFar());
 }
 
 openMenu();
