@@ -8,5 +8,6 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    strictPort: true, // always 5173, so the address on the Quest never changes
   },
 });
