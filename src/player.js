@@ -49,9 +49,9 @@ export function createPlayer({ scene, rig, camera, input, city }) {
   let grounded = true;
 
   const webGeometry = new THREE.CylinderGeometry(0.015, 0.015, 1, 6).rotateX(Math.PI / 2).translate(0, 0, 0.5);
-  const webMaterial = new THREE.MeshBasicMaterial({ color: 0xeeeeee });
+  const webMaterial = new THREE.MeshBasicMaterial({ color: 0xeeeeee, toneMapped: false });
   const reticleGeometry = new THREE.SphereGeometry(1, 12, 8);
-  const reticleMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.85 });
+  const reticleMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.85, toneMapped: false });
 
   const webs = {};
   for (const side of SIDES) {

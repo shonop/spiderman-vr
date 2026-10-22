@@ -112,12 +112,12 @@ export function createMenu({ onPlay }) {
   function addPage(name, title, subtitle, buttons) {
     const group = new THREE.Group();
     group.add(
-      new THREE.Mesh(panelGeometry, new THREE.MeshBasicMaterial({ map: createPanelTexture(title, subtitle), transparent: true })),
+      new THREE.Mesh(panelGeometry, new THREE.MeshBasicMaterial({ map: createPanelTexture(title, subtitle), transparent: true, toneMapped: false })),
     );
     const meshes = buttons.map(({ label, y, onClick }) => {
       const normal = createButtonTexture(label, false);
       const hover = createButtonTexture(label, true);
-      const mesh = new THREE.Mesh(buttonGeometry, new THREE.MeshBasicMaterial({ map: normal, transparent: true }));
+      const mesh = new THREE.Mesh(buttonGeometry, new THREE.MeshBasicMaterial({ map: normal, transparent: true, toneMapped: false }));
       mesh.position.set(0, y, 0.01);
       mesh.renderOrder = 1;
       mesh.userData = { normal, hover, onClick };

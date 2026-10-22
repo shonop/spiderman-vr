@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { createEnvironment } from './graphics.js';
+import { createBlobTexture } from './textures.js';
 import { createCity } from './city.js';
+import { createStreets } from './streets.js';
 import { createTraffic } from './traffic.js';
 import { createPeople } from './people.js';
 import { createInput, SIDES } from './input.js';
@@ -16,7 +19,7 @@ document.body.appendChild(renderer.domElement);
 document.body.appendChild(VRButton.createButton(renderer));
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 600);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 1500);
 camera.position.set(0, 1.6, 0);
 
 // The rig is the player's body: moving or rotating it moves the headset and controllers together.
@@ -24,9 +27,12 @@ const rig = new THREE.Group();
 rig.add(camera);
 scene.add(rig);
 
-const city = createCity(scene);
-const traffic = createTraffic(scene);
-const people = createPeople(scene);
+const environment = createEnvironment(renderer, scene);
+const blobTexture = createBlobTexture();
+const city = createCity(scene, environment.skyMap);
+createStreets(scene);
+const traffic = createTraffic(scene, { skyMap: environment.skyMap, blobTexture });
+const people = createPeople(scene, blobTexture);
 const input = createInput(renderer, rig, camera);
 const player = createPlayer({ scene, rig, camera, input, city });
 const menu = createMenu({ onPlay: startGame });
@@ -120,7 +126,7 @@ function updateHud() {
 openMenu();
 
 // Handy for poking at the game from the browser console while developing.
-if (import.meta.env.DEV) window.game = { scene, rig, camera, player, input, menu, city, people };
+if (import.meta.env.DEV) window.game = { renderer, scene, rig, camera, player, input, menu, city, people };
 
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
@@ -129,7 +135,8 @@ renderer.setAnimationLoop(() => {
   if (state === 'menu') updateMenu();
   else player.update(dt);
   traffic.update(dt, rig.position);
-  people.update(dt);
+  people.update(dt, rig.position);
+  environment.update(rig.position);
   updateHud();
   renderer.render(scene, camera);
 });

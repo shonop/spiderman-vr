@@ -23,7 +23,7 @@ export function createInput(renderer, rig, camera) {
     const controller = renderer.xr.getController(i);
     controller.addEventListener('connected', (e) => (controller.userData.source = e.data));
     controller.addEventListener('disconnected', () => (controller.userData.source = null));
-    const ray = new THREE.Line(rayGeometry, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }));
+    const ray = new THREE.Line(rayGeometry, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, toneMapped: false }));
     controller.add(ray);
     controller.userData.ray = ray;
     rig.add(controller);
