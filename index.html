@@ -1,20 +1,29 @@
 <!doctype html>
-<html lang="he">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>VR Game</title>
+    <title>Spider-Man VR</title>
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
       #hud {
         position: fixed; top: 12px; left: 12px; z-index: 10;
         color: #fff; font: 14px/1.4 system-ui, sans-serif;
         background: rgba(0, 0, 0, 0.5); padding: 8px 12px; border-radius: 8px;
+        pointer-events: none;
       }
+      #crosshair {
+        display: none; position: fixed; left: 50%; top: 50%; z-index: 10;
+        width: 10px; height: 10px; margin: -7px 0 0 -7px;
+        border: 2px solid rgba(255, 255, 255, 0.7); border-radius: 50%;
+        pointer-events: none;
+      }
+      #crosshair.target { border-color: #ff3b3f; background: rgba(255, 59, 63, 0.5); }
     </style>
   </head>
   <body>
-    <div id="hud">Desktop: drag to look · Headset: press "ENTER VR"</div>
+    <div id="hud"></div>
+    <div id="crosshair"></div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
