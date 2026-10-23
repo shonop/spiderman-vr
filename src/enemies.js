@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BLOCKS, BLOCK, blockCenter } from './city.js';
 import { SIDES } from './input.js';
 import { playThud } from './sound.js';
@@ -137,7 +136,7 @@ function fadeUpTexture() {
 // Spider-Man comes down to the street, and fight: jabs, crosses, hooks, uppercuts and kicks
 // aimed at the player's head. The player can step out of the way, block with a hand in front
 // of the face (VR), and punch back with real arm swings in VR, or F / middle click on desktop.
-export function createEnemies({ scene, rig, camera, input, renderer, city, status, blobTexture, onKnockout }) {
+export function createEnemies({ scene, rig, camera, input, hands, renderer, city, status, blobTexture, onKnockout }) {
   const thugs = [];
   for (let i = 0; i < MAX_THUGS; i++) {
     const material = createHumanMaterial(); // one each, so a hit thug can flash on its own
@@ -212,24 +211,6 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
   arrow.add(arrowMesh);
   arrow.visible = false;
   scene.add(arrow);
-
-  // Spider-Man's fists on desktop, so a punch has something to show.
-  const fistMaterial = new THREE.MeshLambertMaterial({ color: 0xc8102e });
-  const fists = SIDES.map((side) => {
-    const fist = new THREE.Mesh(
-      mergeGeometries([
-        new THREE.SphereGeometry(0.04, 12, 8).scale(1, 0.85, 1.1),
-        new THREE.CylinderGeometry(0.026, 0.03, 0.14, 10).rotateX(Math.PI / 2).translate(0, 0, 0.09).rotateX(0.8), // forearm, angled down out of view
-      ]),
-      fistMaterial,
-    );
-    fist.userData = { side, t: 1, rest: new THREE.Vector3(side === 'left' ? -0.21 : 0.21, -0.22, -0.42) };
-    fist.renderOrder = 44;
-    fist.visible = false;
-    camera.add(fist);
-    return fist;
-  });
-  let nextFist = 1;
 
   let phase = 'off'; // off → waiting → fighting → waiting → ...
   let timer = 0;
@@ -719,9 +700,7 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
 
   // Desktop: F or middle click throws a punch at whoever is right in front of the camera.
   function punchFromDesktop() {
-    const fist = fists[nextFist];
-    nextFist = 1 - nextFist;
-    fist.userData.t = 0;
+    hands.punch();
 
     camera.getWorldDirection(look);
     const lookingDown = look.y < -0.45; // aiming low hits the body
@@ -742,19 +721,6 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
     }
     if (best) hurtThug(best, DESKTOP_DAMAGE, look.x, look.z, lookingDown);
     else playThud(0.12, 2.5); // a whoosh at the air
-  }
-
-  function updateFists(dt, show) {
-    for (const fist of fists) {
-      const data = fist.userData;
-      fist.visible = show;
-      data.t = Math.min(1, data.t + dt / 0.22);
-      const jab = Math.sin(data.t * Math.PI);
-      fist.position.copy(data.rest);
-      fist.position.x *= 1 - jab * 0.65;
-      fist.position.y += jab * 0.1;
-      fist.position.z -= jab * 0.3;
-    }
   }
 
   function updateMarker(alive) {
@@ -788,7 +754,6 @@ export function createEnemies({ scene, rig, camera, input, renderer, city, statu
   function update(dt, playing) {
     time += dt;
     status.update(dt);
-    updateFists(dt, playing && phase !== 'off' && !renderer.xr.isPresenting);
     if (!playing || phase === 'off') {
       for (const object of [shadows, barBack, barFill, beam, chevron, arrow]) object.visible = false;
       for (const thug of thugs) thug.human.root.visible = false;

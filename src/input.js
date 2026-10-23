@@ -1,9 +1,8 @@
 import * as THREE from 'three';
-import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
 export const SIDES = ['left', 'right'];
 const DEADZONE = 0.2;
-const SNAP_ANGLE = Math.PI / 6;
+const TURN_SPEED = 2.6; // radians per second with the right stick all the way over
 const MOUSE_SENSITIVITY = 0.0022;
 
 const deadzone = (v) => (Math.abs(v) < DEADZONE ? 0 : v);
@@ -11,12 +10,11 @@ const deadzone = (v) => (Math.abs(v) < DEADZONE ? 0 : v);
 // One place that reads the VR controllers or the keyboard + mouse, so the game logic
 // doesn't care which one is being used.
 //
-// VR:      trigger = web, grip = pull, left stick = walk, right stick = snap turn, A/X = jump
+// VR:      trigger = web, grip = pull, left stick = walk, right stick = turn, A/X = jump
 // Desktop: left/right mouse (or Q/E) = web, Shift = pull, WASD = walk, Space = jump, F / middle click = punch
 // (In VR, punching is just swinging your real hands, see enemies.js.)
 export function createInput(renderer, rig, camera) {
   const dom = renderer.domElement;
-  const modelFactory = new XRControllerModelFactory();
   const rayGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
 
   const controllers = [];
@@ -24,19 +22,28 @@ export function createInput(renderer, rig, camera) {
     const controller = renderer.xr.getController(i);
     controller.addEventListener('connected', (e) => (controller.userData.source = e.data));
     controller.addEventListener('disconnected', () => (controller.userData.source = null));
-    const ray = new THREE.Line(rayGeometry, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, toneMapped: false }));
+    const ray = new THREE.Line(rayGeometry, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, toneMapped: false }));
     controller.add(ray);
     controller.userData.ray = ray;
     rig.add(controller);
-
-    const grip = renderer.xr.getControllerGrip(i);
-    grip.add(modelFactory.createControllerModel(grip));
-    rig.add(grip);
     controllers.push(controller);
   }
 
   const hands = {};
-  for (const side of SIDES) hands[side] = { trigger: false, triggerDown: false, grip: false, controller: null, source: null };
+  // trigger/grip are pressed or not; the values (0..1) and touches drive the fingers (hands.js).
+  for (const side of SIDES) {
+    hands[side] = {
+      trigger: false,
+      triggerDown: false,
+      grip: false,
+      triggerValue: 0,
+      gripValue: 0,
+      indexTouched: true,
+      thumbTouched: true,
+      controller: null,
+      source: null,
+    };
+  }
 
   const move = new THREE.Vector2();
   const mouse = new THREE.Vector2();
@@ -44,7 +51,8 @@ export function createInput(renderer, rig, camera) {
   const mouseButtons = new Set();
   let jumpHeld = false;
   let punchHeld = false;
-  let snapReady = true;
+  const headBefore = new THREE.Vector3();
+  const headAfter = new THREE.Vector3();
 
   const isLocked = () => document.pointerLockElement === dom;
 
@@ -86,7 +94,7 @@ export function createInput(renderer, rig, camera) {
     if (!isLocked()) mouseButtons.clear();
   });
 
-  function update() {
+  function update(dt) {
     rig.updateMatrixWorld(true);
     const pressed = { left: [false, false], right: [false, false] };
     let jump = false;
@@ -104,6 +112,11 @@ export function createInput(renderer, rig, camera) {
         hand.controller = controller;
         hand.source = source;
         pressed[source.handedness] = [!!buttons[0]?.pressed, !!buttons[1]?.pressed];
+        hand.triggerValue = buttons[0]?.value ?? 0;
+        hand.gripValue = buttons[1]?.value ?? 0;
+        hand.indexTouched = !!(buttons[0]?.touched || buttons[0]?.value > 0.05);
+        // the thumb rests on the stick, the face buttons or the thumb rest
+        hand.thumbTouched = [3, 4, 5, 6].some((i) => buttons[i]?.touched || buttons[i]?.pressed);
         jump ||= !!buttons[4]?.pressed;
         if (source.handedness === 'left') move.set(deadzone(axes[2] ?? 0), deadzone(axes[3] ?? 0));
         else turn = axes[2] ?? 0;
@@ -125,6 +138,11 @@ export function createInput(renderer, rig, camera) {
     for (const side of SIDES) {
       const hand = hands[side];
       const [trigger, grip] = pressed[side];
+      if (!renderer.xr.isPresenting) {
+        hand.triggerValue = trigger ? 1 : 0;
+        hand.gripValue = grip ? 1 : 0;
+        hand.indexTouched = hand.thumbTouched = true;
+      }
       hand.triggerDown = trigger && !hand.trigger;
       hand.trigger = trigger;
       hand.grip = grip;
@@ -134,11 +152,17 @@ export function createInput(renderer, rig, camera) {
     api.punchDown = punch && !punchHeld;
     punchHeld = punch;
 
-    if (Math.abs(turn) > 0.7 && snapReady) {
-      rig.rotation.y -= Math.sign(turn) * SNAP_ANGLE;
-      snapReady = false;
-    } else if (Math.abs(turn) < 0.3) {
-      snapReady = true;
+    // Smooth turning around the head (not around the middle of the play area), so turning
+    // doesn't also slide the player sideways.
+    turn = deadzone(turn);
+    if (turn) {
+      camera.getWorldPosition(headBefore);
+      const speed = (Math.abs(turn) - DEADZONE) / (1 - DEADZONE);
+      rig.rotation.y -= Math.sign(turn) * speed * TURN_SPEED * dt;
+      rig.updateMatrixWorld(true);
+      camera.getWorldPosition(headAfter);
+      rig.position.x += headBefore.x - headAfter.x;
+      rig.position.z += headBefore.z - headAfter.z;
     }
     rig.updateMatrixWorld(true);
   }

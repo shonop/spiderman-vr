@@ -45,7 +45,7 @@ function raycastBuildings(ray, maxDistance, colliders) {
 }
 
 // The player's body: gravity, walking, landing on roofs, bumping into walls, and swinging on webs.
-export function createPlayer({ scene, rig, camera, input, city }) {
+export function createPlayer({ scene, rig, camera, input, city, hands }) {
   const velocity = new THREE.Vector3();
   let grounded = true;
 
@@ -103,6 +103,7 @@ export function createPlayer({ scene, rig, camera, input, city }) {
       velocity.addScaledVector(toAnchor, 3);
     }
     input.pulse(side, 0.7, 50);
+    hands.shoot(side);
   }
 
   function collide(prevY) {
@@ -212,7 +213,7 @@ export function createPlayer({ scene, rig, camera, input, city }) {
 
       line.visible = web.attached;
       if (web.attached) {
-        input.getHandPosition(side, handPosition);
+        if (!hands.getWebStart(side, handPosition)) input.getHandPosition(side, handPosition);
         line.position.copy(handPosition);
         line.lookAt(web.anchor);
         line.scale.set(1, 1, handPosition.distanceTo(web.anchor));

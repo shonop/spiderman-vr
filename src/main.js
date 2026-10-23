@@ -11,6 +11,7 @@ import { createMenu } from './menu.js';
 import { createPlayer } from './player.js';
 import { createStatus } from './status.js';
 import { createEnemies } from './enemies.js';
+import { createHands } from './hands.js';
 import { unlockAudio } from './sound.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -37,9 +38,10 @@ createStreets(scene);
 const traffic = createTraffic(scene, { skyMap: environment.skyMap, blobTexture });
 const people = createPeople(scene, blobTexture);
 const input = createInput(renderer, rig, camera);
-const player = createPlayer({ scene, rig, camera, input, city });
+const hands = createHands({ renderer, rig, camera, input });
+const player = createPlayer({ scene, rig, camera, input, city, hands });
 const status = createStatus(camera);
-const enemies = createEnemies({ scene, rig, camera, input, renderer, city, status, blobTexture, onKnockout: () => player.reset() });
+const enemies = createEnemies({ scene, rig, camera, input, hands, renderer, city, status, blobTexture, onKnockout: () => player.reset() });
 const menu = createMenu({ onPlay: startGame });
 scene.add(menu.root);
 
@@ -133,16 +135,22 @@ function updateHud() {
 
 openMenu();
 
+// Installed-app support (offline start). Only in the built version: in dev it would cache stale files.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch((error) => console.warn('Offline mode unavailable:', error));
+}
+
 // Handy for poking at the game from the browser console while developing.
-if (import.meta.env.DEV) window.game = { renderer, scene, rig, camera, player, input, menu, city, people, enemies };
+if (import.meta.env.DEV) window.game = { renderer, scene, rig, camera, player, input, hands, menu, city, people, enemies };
 
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 1 / 30);
-  input.update();
+  input.update(dt);
   if (state === 'menu') updateMenu();
   else player.update(dt);
   enemies.update(dt, state === 'playing');
+  hands.update(dt, state === 'playing');
   traffic.update(dt, rig.position);
   people.update(dt, rig.position);
   environment.update(rig.position);
