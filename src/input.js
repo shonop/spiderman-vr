@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 
 export const SIDES = ['left', 'right'];
+// three.js gives each input source a slot and ignores sources once the slots are full. The Quest
+// can report more than two for a moment (a controller waking up before the hand it replaces is
+// gone), and with only two slots that controller would stay dead until leaving VR.
+export const MAX_SOURCES = 4;
 const DEADZONE = 0.2;
 const TURN_SPEED = 2.6; // radians per second with the right stick all the way over
 const MOUSE_SENSITIVITY = 0.0022;
@@ -18,7 +22,7 @@ export function createInput(renderer, rig, camera) {
   const rayGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
 
   const controllers = [];
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < MAX_SOURCES; i++) {
     const controller = renderer.xr.getController(i);
     controller.addEventListener('connected', (e) => (controller.userData.source = e.data));
     controller.addEventListener('disconnected', () => (controller.userData.source = null));
@@ -105,9 +109,12 @@ export function createInput(renderer, rig, camera) {
       move.set(0, 0);
       for (const side of SIDES) hands[side].controller = hands[side].source = null;
       for (const controller of controllers) {
+        controller.userData.ray.visible = false;
         const source = controller.userData.source;
         const hand = hands[source?.handedness];
-        if (!hand || !source.gamepad) continue;
+        // one controller per hand; tracked hands without a controller aren't supported
+        if (!hand || !source.gamepad || source.hand || hand.controller) continue;
+        controller.userData.ray.visible = true;
         const { buttons, axes } = source.gamepad;
         hand.controller = controller;
         hand.source = source;

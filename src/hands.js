@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { SIDES } from './input.js';
+import { MAX_SOURCES, SIDES } from './input.js';
 import { createHumanMaterial } from './human.js';
 
 // The player's own hands, shown where the controllers are (and at the bottom of the screen
@@ -344,22 +344,26 @@ export function createHands({ renderer, rig, camera, input }) {
   }
 
   // In VR the hands ride on the controllers' grip spaces.
-  for (let i = 0; i < 2; i++) {
+  const grips = [];
+  for (let i = 0; i < MAX_SOURCES; i++) {
     const grip = renderer.xr.getControllerGrip(i);
     rig.add(grip);
-    grip.addEventListener('connected', (e) => {
-      const hand = hands[e.data.handedness];
-      if (!hand || e.data.hand) return; // hand tracking without controllers isn't supported
-      hand.grip = grip;
-      grip.add(hand.holder);
-    });
-    grip.addEventListener('disconnected', () => {
-      for (const side of SIDES) {
-        if (hands[side].grip !== grip) continue;
-        hands[side].grip = null;
-        grip.remove(hands[side].holder);
-      }
-    });
+    grip.addEventListener('connected', (e) => (grip.userData.source = e.data));
+    grip.addEventListener('disconnected', () => (grip.userData.source = null));
+    grips.push(grip);
+  }
+
+  // The controller a hand holds. Checked every frame, so a controller that wakes up late or
+  // replaces a tracked hand is picked up right away (tracked hands alone aren't supported).
+  function findGrip(side) {
+    let fallback = null;
+    for (const grip of grips) {
+      const source = grip.userData.source;
+      if (!source || source.handedness !== side || source.hand) continue;
+      if (source.gamepad) return grip;
+      fallback ||= grip;
+    }
+    return fallback;
   }
 
   let nextPunch = 'right';
@@ -395,6 +399,8 @@ export function createHands({ renderer, rig, camera, input }) {
       const buttons = input.hands[side];
 
       if (vr) {
+        hand.grip = findGrip(side);
+        if (hand.grip && hand.holder.parent !== hand.grip) hand.grip.add(hand.holder);
         hand.holder.visible = !!hand.grip;
       } else {
         if (hand.holder.parent !== hand.desktop) hand.desktop.add(hand.holder);
@@ -411,8 +417,6 @@ export function createHands({ renderer, rig, camera, input }) {
         // Shooting a web flicks the wrist up a little.
         hand.desktop.position.y += Math.max(0, 1 - hand.puffTime * 4) * 0.015;
       }
-      if (vr && hand.holder.parent === hand.desktop) hand.desktop.remove(hand.holder);
-      if (vr && hand.grip && hand.holder.parent !== hand.grip) hand.grip.add(hand.holder);
 
       updatePose(hand, buttons, dt);
 
